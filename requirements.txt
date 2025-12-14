@@ -1,0 +1,23 @@
+# AI Sign Language to Speech - Requirements
+# All libraries are FREE and open-source
+# No paid APIs required - everything runs locally
+
+# Computer Vision & Hand Detection
+mediapipe==0.10.9
+opencv-python==4.8.1.78
+
+# Data Processing
+numpy==1.24.3
+
+# Machine Learning
+tensorflow==2.15.0
+
+# Text-to-Speech (Offline)
+pyttsx3==2.90
+
+# Optional: Web Interface (Recommended for beginners)
+streamlit==1.29.0
+
+# Additional utilities
+scikit-learn==1.3.2
+pandas==2.1.4

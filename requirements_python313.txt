@@ -1,0 +1,24 @@
+# AI Sign Language to Speech - Requirements for Python 3.13
+# All libraries are FREE and open-source
+# No paid APIs required - everything runs locally
+
+# Computer Vision & Hand Detection
+opencv-python==4.12.0.88
+# NOTE: mediapipe is NOT available for Python 3.13 on Windows yet
+# See MEDIAPIPE_SOLUTION.md for workarounds
+
+# Data Processing
+numpy==2.2.6
+
+# Machine Learning
+tensorflow==2.20.0
+
+# Text-to-Speech (Offline)
+pyttsx3==2.99
+
+# Web Interface
+streamlit==1.52.1
+
+# Additional utilities
+scikit-learn==1.8.0
+pandas==2.3.3
