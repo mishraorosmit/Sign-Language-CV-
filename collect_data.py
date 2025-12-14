@@ -6,7 +6,7 @@ import os
 # ===============================
 # CHANGE THIS LETTER EVERY RUN
 # ===============================
-LETTER = "E"   # Change to B, C, D, ...
+LETTER = "U"   # Change to B, C, D, ...
 
 SAMPLES = 200
 DATA_DIR = "data/landmarks"

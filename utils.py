@@ -275,3 +275,161 @@ def print_progress_bar(iteration, total, prefix='', suffix='', length=50):
     print(f'\r{prefix} |{bar}| {percent}% {suffix}', end='')
     if iteration == total:
         print()  # New line when complete
+
+
+def _get_angle(a, b, c):
+    """
+    Calculate angle between three points (a-b-c) in 3D space.
+    b is the vertex.
+    """
+    a = np.array(a)
+    b = np.array(b)
+    c = np.array(c)
+    
+    ba = a - b
+    bc = c - b
+    
+    cosine_angle = np.dot(ba, bc) / (np.linalg.norm(ba) * np.linalg.norm(bc))
+    cosine_angle = np.clip(cosine_angle, -1.0, 1.0)
+    angle = np.arccos(cosine_angle)
+    
+    return np.degrees(angle)
+
+def extract_geometric_features(landmarks):
+    """
+    Convert 21 landmarks (x,y,z) into a vector of geometric features:
+    - Angles between finger segments
+    - Distances between specific points
+    
+    This makes the model rotation-invariant and far more robust.
+    
+    Args:
+        landmarks: Normalized numpy array of shape (63,) or (21, 3)
+        
+    Returns:
+        Numpy array of features (angles + distances)
+    """
+    if landmarks is None:
+        return None
+        
+    # Reshape if flat
+    if landmarks.shape == (63,):
+        landmarks = landmarks.reshape(21, 3)
+        
+    features = []
+    
+    # --- 1. Finger Angles (Bending) ---
+    # Thumb
+    features.append(_get_angle(landmarks[0], landmarks[2], landmarks[4]))
+    features.append(_get_angle(landmarks[2], landmarks[3], landmarks[4]))
+    
+    # Index
+    features.append(_get_angle(landmarks[0], landmarks[5], landmarks[8]))
+    features.append(_get_angle(landmarks[5], landmarks[6], landmarks[8]))
+    
+    # Middle
+    features.append(_get_angle(landmarks[0], landmarks[9], landmarks[12]))
+    features.append(_get_angle(landmarks[9], landmarks[10], landmarks[12]))
+    
+    # Ring
+    features.append(_get_angle(landmarks[0], landmarks[13], landmarks[16]))
+    features.append(_get_angle(landmarks[13], landmarks[14], landmarks[16]))
+    
+    # Pinky
+    features.append(_get_angle(landmarks[0], landmarks[17], landmarks[20]))
+    features.append(_get_angle(landmarks[17], landmarks[18], landmarks[20]))
+    
+    # --- 2. Finger Abduction Features (Spread) ---
+    # Angles between fingers (e.g., Index vs Middle)
+    features.append(_get_angle(landmarks[8], landmarks[0], landmarks[12]))  # Index-Middle spread
+    features.append(_get_angle(landmarks[12], landmarks[0], landmarks[16])) # Middle-Ring spread
+    features.append(_get_angle(landmarks[16], landmarks[0], landmarks[20])) # Ring-Pinky spread
+    features.append(_get_angle(landmarks[4], landmarks[0], landmarks[8]))   # Thumb-Index spread
+    
+    # --- 3. Key Distances (Normalized by Wrist-MiddleMCP) ---
+    # We normalize distances by the size of the palm to handle hand size differences
+    palm_size = np.linalg.norm(landmarks[0] - landmarks[9])
+    if palm_size == 0: palm_size = 1.0
+    
+    # Fingertip to Wrist distances
+    features.append(np.linalg.norm(landmarks[4] - landmarks[0]) / palm_size)  # Thumb tip
+    features.append(np.linalg.norm(landmarks[8] - landmarks[0]) / palm_size)  # Index tip
+    features.append(np.linalg.norm(landmarks[12] - landmarks[0]) / palm_size) # Middle tip
+    features.append(np.linalg.norm(landmarks[16] - landmarks[0]) / palm_size) # Ring tip
+    features.append(np.linalg.norm(landmarks[20] - landmarks[0]) / palm_size) # Pinky tip
+    
+    # Thumb tip to potential touch points
+    features.append(np.linalg.norm(landmarks[4] - landmarks[8]) / palm_size)   # Thumb-Index touch
+    features.append(np.linalg.norm(landmarks[4] - landmarks[12]) / palm_size)  # Thumb-Middle touch
+    features.append(np.linalg.norm(landmarks[4] - landmarks[16]) / palm_size)  # Thumb-Ring touch
+    features.append(np.linalg.norm(landmarks[4] - landmarks[20]) / palm_size)  # Thumb-Pinky touch
+
+    return np.array(features)
+
+
+def augment_landmarks(landmarks):
+    """
+    Generate variations of a landmark set using math (Data Augmentation).
+    
+    Returns a list of augmented landmark arrays:
+    1. Original
+    2. Rotated +15 degrees (Z-axis)
+    3. Rotated -15 degrees (Z-axis)
+    4. Scaled slightly (0.9x)
+    5. Scaled slightly (1.1x)
+    6. Noisy (jitter)
+    
+    Args:
+        landmarks: Normalized numpy array (21, 3) or (63,)
+        
+    Returns:
+        List of numpy arrays (augmented versions)
+    """
+    if landmarks is None:
+        return []
+
+    # Ensure shape is (21, 3) for math
+    original_shape_was_flat = False
+    if landmarks.shape == (63,):
+        landmarks = landmarks.reshape(21, 3)
+        original_shape_was_flat = True
+        
+    augmented_list = [landmarks.copy()] # Keep original
+    
+    # -----------------------------------------------
+    # 1. Rotation (Math: Rotation Matrix around Z-axis)
+    # -----------------------------------------------
+    def rotate_z(points, angle_degrees):
+        angle_rad = np.radians(angle_degrees)
+        # Rotation matrix for Z-axis (2D rotation in XY plane)
+        # [ cos -sin  0 ]
+        # [ sin  cos  0 ]
+        # [  0    0   1 ]
+        c, s = np.cos(angle_rad), np.sin(angle_rad)
+        rotation_matrix = np.array(((c, -s, 0), (s, c, 0), (0, 0, 1)))
+        
+        # Apply rotation to all points
+        # Rotated around origin (wrist at 0,0,0 because it's normalized)
+        rotated = points.dot(rotation_matrix.T)
+        return rotated
+        
+    augmented_list.append(rotate_z(landmarks, 15))
+    augmented_list.append(rotate_z(landmarks, -15))
+    
+    # -----------------------------------------------
+    # 2. Scaling (Math: Simple multiplication)
+    # -----------------------------------------------
+    augmented_list.append(landmarks * 0.9)
+    augmented_list.append(landmarks * 1.1)
+    
+    # -----------------------------------------------
+    # 3. Noise (Math: Random Normal Distribution)
+    # -----------------------------------------------
+    noise = np.random.normal(0, 0.02, landmarks.shape)
+    augmented_list.append(landmarks + noise)
+
+    # Flatten back if needed
+    if original_shape_was_flat:
+        return [aug.flatten() for aug in augmented_list]
+    else:
+        return augmented_list

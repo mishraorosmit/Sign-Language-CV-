@@ -23,6 +23,7 @@ from config import (
     MODEL_PATH, CAMERA_INDEX, PREDICTION_CONFIDENCE_THRESHOLD,
     STABILITY_FRAMES
 )
+from utils import extract_geometric_features
 
 
 class RealtimePredictor:
@@ -84,13 +85,14 @@ class RealtimePredictor:
             return None, 0.0
         
         # Reshape for model input
-        # Model expects shape (batch_size, features)
-        # We have 1 sample, so shape is (1, 63)
-        landmarks_reshaped = landmarks_array.reshape(1, -1)
+        # Model expects shape (1, 63) - Raw Augumented Landmarks
+        
+        # Reshape to (1, N)
+        feature_vector = landmarks_array.reshape(1, -1)
         
         # Make prediction
         # This returns probabilities for each class
-        predictions = self.model.predict(landmarks_reshaped, verbose=0)
+        predictions = self.model.predict(feature_vector, verbose=0)
         
         # Get the class with highest probability
         predicted_class_idx = np.argmax(predictions[0])
@@ -263,97 +265,139 @@ class RealtimePredictor:
     
     def _draw_prediction_info(self, frame, letter, confidence, stable_letter, stable_confidence, hands_info=None, dominant_hand=None):
         """
-        Draw prediction information on the frame.
-        
-        Args:
-            frame: Frame to draw on
-            letter: Current predicted letter
-            confidence: Current confidence
-            stable_letter: Stable prediction
-            stable_confidence: Stable confidence
-            hands_info: List of detected hands (optional)
-            dominant_hand: The dominant hand being used (optional)
+        Draw prediction information with a sophisticated, modern UI.
+        Theme: Cyan & Dark Grey
         """
         height, width = frame.shape[:2]
         
-        # Background for text
+        # Colors (BGR)
+        CYAN = (255, 255, 0)
+        DARK_GREY = (30, 30, 30)
+        GLASS_GREY = (20, 20, 20)
+        WHITE = (255, 255, 255)
+        
+        # ---------------------------------------------------------
+        # 1. Glassmorphism Sidebar
+        # ---------------------------------------------------------
+        sidebar_width = 320
         overlay = frame.copy()
-        cv2.rectangle(overlay, (0, 0), (width, 200), (0, 0, 0), -1)
-        cv2.addWeighted(overlay, 0.6, frame, 0.4, 0, frame)
         
-        # Show hands info
+        # Sidebar background
+        cv2.rectangle(overlay, (0, 0), (sidebar_width, height), GLASS_GREY, -1)
+        
+        # Apply transparency
+        alpha = 0.85
+        cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0, frame)
+        
+        # Sidebar accent line
+        cv2.line(frame, (sidebar_width, 0), (sidebar_width, height), CYAN, 2)
+
+        # ---------------------------------------------------------
+        # 2. Header
+        # ---------------------------------------------------------
+        cv2.rectangle(frame, (0, 0), (sidebar_width, 60), (40, 40, 40), -1)
+        # Gradient-like effect text? Just crisp Cyan text
+        cv2.putText(frame, "AI GESTURES", (20, 40), cv2.FONT_HERSHEY_DUPLEX, 0.8, CYAN, 1, cv2.LINE_AA)
+        
+        # ---------------------------------------------------------
+        # 3. Connection / Hand Status
+        # ---------------------------------------------------------
+        y_cursor = 100
+        
+        status_color = CYAN if hands_info else (0, 0, 200) # Cyan or Dark Red
+        status_text = "SYSTEM ACTIVE" if hands_info else "SEARCHING..."
+        
+        # Status Badge
+        cv2.rectangle(frame, (20, y_cursor - 20), (180, y_cursor + 10), (50, 50, 50), -1)
+        cv2.circle(frame, (35, y_cursor - 5), 5, status_color, -1)
+        cv2.putText(frame, status_text, (50, y_cursor), cv2.FONT_HERSHEY_SIMPLEX, 0.5, WHITE, 1, cv2.LINE_AA)
+        
+        y_cursor += 40
         if hands_info:
-            hands_text = f"Hands: {len(hands_info)}"
+            hand_count_text = f"TRACKING: {len(hands_info)} HAND(S)"
+            cv2.putText(frame, hand_count_text, (20, y_cursor), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1, cv2.LINE_AA)
+            y_cursor += 25
             if dominant_hand:
-                hands_text += f" | Using: {dominant_hand['handedness']} ({dominant_hand['confidence']*100:.1f}%)"
+                dom_text = f"DOMAIN: {dominant_hand['handedness'].upper()}"
+                cv2.putText(frame, dom_text, (20, y_cursor), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (150, 150, 150), 1, cv2.LINE_AA)
+        
+        # ---------------------------------------------------------
+        # 4. Prediction Card (Hero)
+        # ---------------------------------------------------------
+        y_cursor = 220
+        cv2.putText(frame, "ANALYSIS", (20, y_cursor), cv2.FONT_HERSHEY_SIMPLEX, 0.5, CYAN, 1, cv2.LINE_AA)
+        y_cursor += 15
+        
+        # Card Background
+        cv2.rectangle(frame, (20, y_cursor), (sidebar_width - 20, y_cursor + 100), (40, 40, 40), -1)
+        cv2.rectangle(frame, (20, y_cursor), (sidebar_width - 20, y_cursor + 100), CYAN, 1) # Border
+        
+        display_letter = letter if letter else "-"
+        text_size = cv2.getTextSize(display_letter, cv2.FONT_HERSHEY_DUPLEX, 2.5, 3)[0]
+        text_x = 20 + (sidebar_width - 40 - text_size[0]) // 2
+        text_y = y_cursor + 100 - (100 - text_size[1]) // 2
+        
+        cv2.putText(frame, display_letter, (text_x, text_y), cv2.FONT_HERSHEY_DUPLEX, 2.5, WHITE, 3, cv2.LINE_AA)
+        
+        # ---------------------------------------------------------
+        # 5. Confidence Meter
+        # ---------------------------------------------------------
+        y_cursor += 130
+        cv2.putText(frame, f"CONFIDENCE: {confidence*100:.0f}%", (20, y_cursor), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1, cv2.LINE_AA)
+        y_cursor += 10
+        
+        # Bar
+        bar_width = sidebar_width - 40
+        bar_height = 6
+        cv2.rectangle(frame, (20, y_cursor), (20 + bar_width, y_cursor + bar_height), (50, 50, 50), -1)
+        
+        fill_width = int(bar_width * confidence)
+        cv2.rectangle(frame, (20, y_cursor), (20 + fill_width, y_cursor + bar_height), CYAN, -1)
+        
+        # ---------------------------------------------------------
+        # 6. Locked Output
+        # ---------------------------------------------------------
+        y_cursor += 60
+        cv2.putText(frame, "LOCKED SIGNAL", (20, y_cursor), cv2.FONT_HERSHEY_SIMPLEX, 0.5, CYAN, 1, cv2.LINE_AA)
+        y_cursor += 40
+        
+        stable_display = stable_letter if stable_letter else "..."
+        cv2.putText(frame, stable_display, (20, y_cursor), cv2.FONT_HERSHEY_SIMPLEX, 2, WHITE, 3, cv2.LINE_AA)
+        
+        # ---------------------------------------------------------
+        # 7. EXCLUSIVE WATERMARK (Bottom Right)
+        # ---------------------------------------------------------
+        # "OroNab pvt ltd"
+        watermark_text = "OroNab pvt ltd"
+        (wm_w, wm_h), _ = cv2.getTextSize(watermark_text, cv2.FONT_HERSHEY_TRIPLEX, 0.6, 1)
+        
+        wm_x = width - wm_w - 20
+        wm_y = height - 20
+        
+        # Subtle shadow for readability
+        cv2.putText(frame, watermark_text, (wm_x + 1, wm_y + 1), cv2.FONT_HERSHEY_TRIPLEX, 0.6, (0, 0, 0), 1, cv2.LINE_AA)
+        # Main text
+        cv2.putText(frame, watermark_text, (wm_x, wm_y), cv2.FONT_HERSHEY_TRIPLEX, 0.6, (200, 200, 200), 1, cv2.LINE_AA)
+        
+        # ---------------------------------------------------------
+        # Main View Center Popup
+        # ---------------------------------------------------------
+        if stable_letter:
+            main_center_x = sidebar_width + (width - sidebar_width) // 2
+            main_y = height - 80
             
-            cv2.putText(
-                frame,
-                hands_text,
-                (10, 25),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.6,
-                (255, 255, 0),
-                2
-            )
-        
-        # Current prediction
-        color = (0, 255, 0) if confidence >= PREDICTION_CONFIDENCE_THRESHOLD else (0, 165, 255)
-        
-        cv2.putText(
-            frame,
-            f"Current: {letter} ({confidence*100:.1f}%)",
-            (10, 60),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.8,
-            color,
-            2
-        )
-        
-        # Stable prediction (if available)
-        if stable_letter is not None:
-            cv2.putText(
-                frame,
-                f"Stable: {stable_letter} ({stable_confidence*100:.1f}%)",
-                (10, 100),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                1.2,
-                (0, 255, 0),
-                3
-            )
+            label = f"DETECTED: {stable_letter}"
+            (w, h), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 1, 2)
             
-            # Large letter display
-            cv2.putText(
-                frame,
-                stable_letter,
-                (width - 100, 120),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                3,
-                (0, 255, 0),
-                5
-            )
-        
-        # Threshold indicator
-        cv2.putText(
-            frame,
-            f"Threshold: {PREDICTION_CONFIDENCE_THRESHOLD*100:.0f}%",
-            (10, 140),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.6,
-            (255, 255, 255),
-            1
-        )
-        
-        # Instructions
-        cv2.putText(
-            frame,
-            "Press 'q' to quit",
-            (10, 175),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.5,
-            (255, 255, 255),
-            1
-        )
+            box_tl = (main_center_x - w//2 - 20, main_y - h - 20)
+            box_br = (main_center_x + w//2 + 20, main_y + 10)
+            
+            sub_overlay = frame.copy()
+            cv2.rectangle(sub_overlay, box_tl, box_br, (0, 0, 0), -1)
+            cv2.addWeighted(sub_overlay, 0.6, frame, 0.4, 0, frame)
+            
+            cv2.rectangle(frame, box_tl, box_br, CYAN, 2)
+            cv2.putText(frame, label, (main_center_x - w//2, main_y), cv2.FONT_HERSHEY_SIMPLEX, 1, WHITE, 2, cv2.LINE_AA)
 
 
 def main():
